@@ -1,53 +1,72 @@
 import 'dart:convert';
 import 'package:login_jwt/models/auth_tokens_model.dart';
 import 'package:login_jwt/models/user_model.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+// Conditionally import the web library using dart.library.js_interop
+import 'package:login_jwt/services/web_storage_stub.dart'
+    if (dart.library.js_interop) 'package:login_jwt/services/web_storage.dart';
 
 class StorageService {
   static const String _keyAccessToken = 'access_token';
   static const String _keyRefreshToken = 'refresh_token';
   static const String _keyUserData = 'user_data';
 
-  final SharedPreferences _prefs;
+  // In-memory fallback for Native (Android/iOS/Windows) acting as a session
+  String? _ramAccessToken;
+  String? _ramRefreshToken;
+  UserModel? _ramUser;
 
-  StorageService(this._prefs);
+  StorageService();
 
   static Future<StorageService> getInstance() async {
-    final prefs = await SharedPreferences.getInstance();
-    return StorageService(prefs);
+    return StorageService();
   }
 
   Future<void> saveTokens(AuthTokensModel tokens) async {
-    await _prefs.setString(_keyAccessToken, tokens.accessToken);
-    await _prefs.setString(_keyRefreshToken, tokens.refreshToken);
-  }
-
-  String? getAccessToken() {
-    return _prefs.getString(_keyAccessToken);
-  }
-
-  String? getRefreshToken() {
-    return _prefs.getString(_keyRefreshToken);
-  }
-
-  Future<void> saveUser(UserModel user) async {
-    await _prefs.setString(_keyUserData, jsonEncode(user.toJson()));
-  }
-
-  UserModel? getUser() {
-    final userJsonStr = _prefs.getString(_keyUserData);
-    if (userJsonStr == null || userJsonStr.isEmpty) return null;
-    try {
-      final Map<String, dynamic> userMap = jsonDecode(userJsonStr);
-      return UserModel.fromJson(userMap);
-    } catch (_) {
-      return null;
+    final success = setWebSessionItem(_keyAccessToken, tokens.accessToken) &&
+                    setWebSessionItem(_keyRefreshToken, tokens.refreshToken);
+    if (!success) {
+      _ramAccessToken = tokens.accessToken;
+      _ramRefreshToken = tokens.refreshToken;
     }
   }
 
+  String? getAccessToken() {
+    return getWebSessionItem(_keyAccessToken) ?? _ramAccessToken;
+  }
+
+  String? getRefreshToken() {
+    return getWebSessionItem(_keyRefreshToken) ?? _ramRefreshToken;
+  }
+
+  Future<void> saveUser(UserModel user) async {
+    final success = setWebSessionItem(_keyUserData, jsonEncode(user.toJson()));
+    if (!success) {
+      _ramUser = user;
+    }
+  }
+
+  UserModel? getUser() {
+    final userJsonStr = getWebSessionItem(_keyUserData);
+    if (userJsonStr != null && userJsonStr.isNotEmpty) {
+      try {
+        final Map<String, dynamic> userMap = jsonDecode(userJsonStr);
+        return UserModel.fromJson(userMap);
+      } catch (_) {
+        return null;
+      }
+    }
+    return _ramUser;
+  }
+
   Future<void> clearAuth() async {
-    await _prefs.remove(_keyAccessToken);
-    await _prefs.remove(_keyRefreshToken);
-    await _prefs.remove(_keyUserData);
+    final success = removeWebSessionItem(_keyAccessToken) &&
+                    removeWebSessionItem(_keyRefreshToken) &&
+                    removeWebSessionItem(_keyUserData);
+    if (!success) {
+      _ramAccessToken = null;
+      _ramRefreshToken = null;
+      _ramUser = null;
+    }
   }
 }

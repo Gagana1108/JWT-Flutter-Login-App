@@ -135,33 +135,41 @@ class ApiService {
   }
 
   Future<bool> attemptTokenRefresh() async {
+    // Step 1: Fetch the stored Refresh Token from local storage
     final refreshToken = storageService.getRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) return false;
 
     try {
+      // Step 2: Send the Refresh Token to the backend server
       final response = await http
           .post(
-            Uri.parse(ApiConfig.refreshUrl),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'refresh_token': refreshToken}),
-          )
+        Uri.parse(ApiConfig.refreshUrl), // http://10.0.2.2:8080/api/v1/auth/refresh
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refreshToken}),
+      )
           .timeout(ApiConfig.timeout);
 
+      // Step 3: Check if the backend accepted the Refresh Token
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
+
         if (data['success'] == true && data['data'] != null) {
+          // Step 4: Parse the NEW tokens sent by the backend
           final newTokens = AuthTokensModel.fromJson(
             data['data'] as Map<String, dynamic>,
           );
+
+          // Step 5: Save the NEW Access Token & NEW Refresh Token to phone storage
           await storageService.saveTokens(newTokens);
-          return true;
+          return true; // Token refresh succeeded!
         }
       }
     } catch (_) {
-      // Refresh failed
+      // Network or server error during refresh
     }
 
-    await storageService.clearAuth();
-    return false;
+    // Step 6: If refresh failed (e.g., Refresh Token expired after 7 days)
+    await storageService.clearAuth(); // Wipe all local user data
+    return false; // Token refresh failed!
   }
 }

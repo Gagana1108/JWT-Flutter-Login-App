@@ -7,9 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('App renders splash screen correctly', (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final prefs = await SharedPreferences.getInstance();
-    final storageService = StorageService(prefs);
+    final storageService = StorageService();
 
     await tester.pumpWidget(
       MultiProvider(
