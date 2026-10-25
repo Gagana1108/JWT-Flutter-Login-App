@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:login_jwt/config/api_config.dart';
+import 'package:login_jwt/models/auth_tokens_model.dart';
 import 'package:login_jwt/services/storage_service.dart';
 
 class ApiException implements Exception {
@@ -52,6 +53,7 @@ class ApiService {
 
       return await _handleResponse(
         response,
+        retryAction: () => post(url, body: body, requiresAuth: requiresAuth),
         requiresAuth: requiresAuth,
       );
     } catch (e) {
@@ -77,6 +79,7 @@ class ApiService {
 
       return await _handleResponse(
         response,
+        retryAction: () => get(url, requiresAuth: requiresAuth),
         requiresAuth: requiresAuth,
       );
     } catch (e) {
@@ -107,6 +110,7 @@ class ApiService {
 
       return await _handleResponse(
         response,
+        retryAction: () => patch(url, body: body, requiresAuth: requiresAuth),
         requiresAuth: requiresAuth,
       );
     } catch (e) {
@@ -120,6 +124,7 @@ class ApiService {
 
   Future<dynamic> _handleResponse(
     http.Response response, {
+    required Future<dynamic> Function() retryAction,
     bool requiresAuth = false,
   }) async {
     final statusCode = response.statusCode;
@@ -149,11 +154,27 @@ class ApiService {
     }
 
     if (statusCode == 401) {
-      await storageService.clearAuth();
-      throw ApiException(
-        'Session expired. Please log in again.',
-        statusCode: 401,
-      );
+      if (requiresAuth) {
+        // Attempt to seamlessly refresh the token
+        final refreshed = await attemptTokenRefresh();
+        if (refreshed) {
+          // If successful, retry the exact same request that failed
+          return await retryAction();
+        } else {
+          // If refresh token is expired or invalid, log the user out
+          await storageService.clearAuth();
+          throw ApiException(
+            'Session expired. Please log in again.',
+            statusCode: 401,
+          );
+        }
+      } else {
+        // Public route 401 (e.g., Wrong password on Login)
+        throw ApiException(
+          responseData['message'] as String? ?? 'Unauthorized.',
+          statusCode: 401,
+        );
+      }
     }
 
     if (statusCode == 403) {
@@ -193,5 +214,36 @@ class ApiService {
     final errors = responseData['errors'] as Map<String, dynamic>?;
 
     throw ApiException(message, statusCode: statusCode, errors: errors);
+  }
+
+  Future<bool> attemptTokenRefresh() async {
+    final refreshToken = storageService.getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.refreshUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'refresh_token': refreshToken}),
+          )
+          .timeout(ApiConfig.timeout);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['success'] == true && data['data'] != null) {
+          final newTokens = AuthTokensModel.fromJson(
+            data['data'] as Map<String, dynamic>,
+          );
+          await storageService.saveTokens(newTokens);
+          return true;
+        }
+      }
+    } catch (_) {
+      // Refresh failed
+    }
+
+    await storageService.clearAuth();
+    return false;
   }
 }

@@ -29,6 +29,10 @@ class StorageService {
     return getWebSessionItem(_keyAccessToken) ?? _ramAccessToken;
   }
 
+  String? getRefreshToken() {
+    return getWebSessionItem('refresh_token');
+  }
+
   Future<void> saveUser(UserModel user) async {
     setWebSessionItem(_keyUserData, jsonEncode(user.toJson()));
     _ramUser = user;
