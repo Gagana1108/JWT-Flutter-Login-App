@@ -8,12 +8,10 @@ import 'package:login_jwt/services/web_storage_stub.dart'
 
 class StorageService {
   static const String _keyAccessToken = 'access_token';
-  static const String _keyRefreshToken = 'refresh_token';
   static const String _keyUserData = 'user_data';
 
   // In-memory fallback for Native (Android/iOS/Windows) acting as a session
   String? _ramAccessToken;
-  String? _ramRefreshToken;
   UserModel? _ramUser;
 
   StorageService();
@@ -23,27 +21,17 @@ class StorageService {
   }
 
   Future<void> saveTokens(AuthTokensModel tokens) async {
-    final success = setWebSessionItem(_keyAccessToken, tokens.accessToken) &&
-                    setWebSessionItem(_keyRefreshToken, tokens.refreshToken);
-    if (!success) {
-      _ramAccessToken = tokens.accessToken;
-      _ramRefreshToken = tokens.refreshToken;
-    }
+    setWebSessionItem(_keyAccessToken, tokens.accessToken);
+    _ramAccessToken = tokens.accessToken;
   }
 
   String? getAccessToken() {
     return getWebSessionItem(_keyAccessToken) ?? _ramAccessToken;
   }
 
-  String? getRefreshToken() {
-    return getWebSessionItem(_keyRefreshToken) ?? _ramRefreshToken;
-  }
-
   Future<void> saveUser(UserModel user) async {
-    final success = setWebSessionItem(_keyUserData, jsonEncode(user.toJson()));
-    if (!success) {
-      _ramUser = user;
-    }
+    setWebSessionItem(_keyUserData, jsonEncode(user.toJson()));
+    _ramUser = user;
   }
 
   UserModel? getUser() {
@@ -60,13 +48,9 @@ class StorageService {
   }
 
   Future<void> clearAuth() async {
-    final success = removeWebSessionItem(_keyAccessToken) &&
-                    removeWebSessionItem(_keyRefreshToken) &&
-                    removeWebSessionItem(_keyUserData);
-    if (!success) {
-      _ramAccessToken = null;
-      _ramRefreshToken = null;
-      _ramUser = null;
-    }
+    removeWebSessionItem(_keyAccessToken);
+    removeWebSessionItem(_keyUserData);
+    _ramAccessToken = null;
+    _ramUser = null;
   }
 }

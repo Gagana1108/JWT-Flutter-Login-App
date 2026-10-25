@@ -18,11 +18,14 @@ class ApiConfig {
   // Auth endpoints
   static String get registerUrl => '$baseUrl/api/v1/auth/register';
   static String get loginUrl => '$baseUrl/api/v1/auth/login';
-  static String get refreshUrl => '$baseUrl/api/v1/auth/refresh';
   static String get logoutUrl => '$baseUrl/api/v1/auth/logout';
 
   // User endpoints
   static String get userProfileUrl => '$baseUrl/api/v1/user/profile';
+
+  // Admin endpoints
+  static String get adminUsersUrl => '$baseUrl/api/v1/admin/users';
+  static String adminUserRoleUrl(int id) => '$baseUrl/api/v1/admin/users/$id/role';
 
   static const Duration timeout = Duration(seconds: 15);
 }

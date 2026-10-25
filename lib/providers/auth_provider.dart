@@ -157,7 +157,7 @@ class AuthProvider extends ChangeNotifier {
       _currentUser = user;
       _status = AuthStatus.authenticated;
       if (!silent) {
-        _successMessage = 'Profile updated successfully!';
+        _successMessage = 'Profile loaded successfully!';
       }
     } on ApiException catch (e) {
       if (e.statusCode == 401) {
@@ -177,24 +177,120 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> refreshTokensManually() async {
+  List<UserModel> _adminUserList = [];
+  List<UserModel> get adminUserList => _adminUserList;
+
+  Future<bool> updateProfile(String newName) async {
     _isLoading = true;
     _errorMessage = null;
     _successMessage = null;
     notifyListeners();
 
-    final success = await apiService.attemptTokenRefresh();
-    if (success) {
-      _successMessage = 'Tokens rotated successfully!';
-    } else {
-      _errorMessage = 'Failed to rotate refresh token. Session expired.';
-      _status = AuthStatus.unauthenticated;
-      _currentUser = null;
-    }
+    try {
+      final response = await apiService.patch(
+        ApiConfig.userProfileUrl,
+        body: {'name': newName},
+        requiresAuth: true,
+      );
 
-    _isLoading = false;
+      final data = response['data'] as Map<String, dynamic>;
+      final user = UserModel.fromJson(data['user'] as Map<String, dynamic>);
+
+      await storageService.saveUser(user);
+      _currentUser = user;
+      _successMessage = 'Profile name updated successfully!';
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      _errorMessage = e.message;
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _errorMessage = 'Failed to update profile: $e';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> fetchAdminUsers() async {
+    _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
-    return success;
+
+    try {
+      final response = await apiService.get(
+        ApiConfig.adminUsersUrl,
+        requiresAuth: true,
+      );
+
+      final data = response['data'] as Map<String, dynamic>;
+      final usersList = (data['users'] as List<dynamic>)
+          .map((json) => UserModel.fromJson(json as Map<String, dynamic>))
+          .toList();
+
+      _adminUserList = usersList;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      _errorMessage = e.message;
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _errorMessage = 'Failed to fetch user list: $e';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> updateUserRole(int userId, String newRole) async {
+    _isLoading = true;
+    _errorMessage = null;
+    _successMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await apiService.patch(
+        ApiConfig.adminUserRoleUrl(userId),
+        body: {'role': newRole},
+        requiresAuth: true,
+      );
+
+      final data = response['data'] as Map<String, dynamic>;
+      final updatedUser = UserModel.fromJson(data['user'] as Map<String, dynamic>);
+
+      // Update in admin user list
+      final index = _adminUserList.indexWhere((u) => u.id == userId);
+      if (index != -1) {
+        _adminUserList[index] = updatedUser;
+      }
+
+      // If updating current logged in user
+      if (_currentUser?.id == userId) {
+        _currentUser = updatedUser;
+        await storageService.saveUser(updatedUser);
+      }
+
+      _successMessage = 'User role updated to $newRole successfully!';
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } on ApiException catch (e) {
+      _errorMessage = e.message;
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _errorMessage = 'Failed to update user role: $e';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<void> logout() async {
@@ -202,18 +298,16 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final refreshToken = storageService.getRefreshToken();
-      if (refreshToken != null && refreshToken.isNotEmpty) {
-        await apiService.post(
-          ApiConfig.logoutUrl,
-          body: {'refresh_token': refreshToken},
-        );
-      }
+      await apiService.post(
+        ApiConfig.logoutUrl,
+        body: {},
+      );
     } catch (_) {
       // Ignore network errors during logout
     } finally {
       await storageService.clearAuth();
       _currentUser = null;
+      _adminUserList = [];
       _status = AuthStatus.unauthenticated;
       _isLoading = false;
       _errorMessage = null;

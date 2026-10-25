@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:login_jwt/config/api_config.dart';
-import 'package:login_jwt/models/auth_tokens_model.dart';
 import 'package:login_jwt/services/storage_service.dart';
 
 class ApiException implements Exception {
@@ -20,14 +19,16 @@ class ApiService {
 
   ApiService(this.storageService);
 
-  Map<String, String> _buildHeaders({String? token}) {
+  Map<String, String> _buildHeaders({String? token, bool requiresAuth = false}) {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    final activeToken = token ?? storageService.getAccessToken();
-    if (activeToken != null && activeToken.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $activeToken';
+    if (requiresAuth) {
+      final activeToken = token ?? storageService.getAccessToken();
+      if (activeToken != null && activeToken.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $activeToken';
+      }
     }
     return headers;
   }
@@ -38,7 +39,7 @@ class ApiService {
     bool requiresAuth = false,
   }) async {
     final uri = Uri.parse(url);
-    final headers = _buildHeaders();
+    final headers = _buildHeaders(requiresAuth: requiresAuth);
 
     try {
       final response = await http
@@ -51,7 +52,6 @@ class ApiService {
 
       return await _handleResponse(
         response,
-        retryAction: () => post(url, body: body, requiresAuth: requiresAuth),
         requiresAuth: requiresAuth,
       );
     } catch (e) {
@@ -68,7 +68,7 @@ class ApiService {
     bool requiresAuth = true,
   }) async {
     final uri = Uri.parse(url);
-    final headers = _buildHeaders();
+    final headers = _buildHeaders(requiresAuth: requiresAuth);
 
     try {
       final response = await http
@@ -77,7 +77,36 @@ class ApiService {
 
       return await _handleResponse(
         response,
-        retryAction: () => get(url, requiresAuth: requiresAuth),
+        requiresAuth: requiresAuth,
+      );
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      throw ApiException(
+        'Network error: Unable to connect to server ($e). Please check backend connection.',
+        statusCode: 0,
+      );
+    }
+  }
+
+  Future<dynamic> patch(
+    String url, {
+    Map<String, dynamic>? body,
+    bool requiresAuth = true,
+  }) async {
+    final uri = Uri.parse(url);
+    final headers = _buildHeaders(requiresAuth: requiresAuth);
+
+    try {
+      final response = await http
+          .patch(
+            uri,
+            headers: headers,
+            body: body != null ? jsonEncode(body) : null,
+          )
+          .timeout(ApiConfig.timeout);
+
+      return await _handleResponse(
+        response,
         requiresAuth: requiresAuth,
       );
     } catch (e) {
@@ -91,7 +120,6 @@ class ApiService {
 
   Future<dynamic> _handleResponse(
     http.Response response, {
-    required Future<dynamic> Function() retryAction,
     bool requiresAuth = false,
   }) async {
     final statusCode = response.statusCode;
@@ -108,23 +136,56 @@ class ApiService {
       );
     }
 
-    if (statusCode >= 200 && statusCode < 300) {
+    if (statusCode == 200 || statusCode == 201) {
       return responseData;
     }
 
-    // 401 Unauthorized handling & Auto Token Refresh
-    if (statusCode == 401 && requiresAuth) {
-      final refreshed = await attemptTokenRefresh();
-      if (refreshed) {
-        // Retry original request with newly saved access token
-        return await retryAction();
-      } else {
-        await storageService.clearAuth();
-        throw ApiException(
-          'Session expired. Please log in again.',
-          statusCode: 401,
-        );
-      }
+    if (statusCode == 400) {
+      throw ApiException(
+        responseData['message'] as String? ??
+            'Bad request. Please check the submitted data.',
+        statusCode: 400,
+      );
+    }
+
+    if (statusCode == 401) {
+      await storageService.clearAuth();
+      throw ApiException(
+        'Session expired. Please log in again.',
+        statusCode: 401,
+      );
+    }
+
+    if (statusCode == 403) {
+      throw ApiException(
+        responseData['message'] as String? ??
+            'Access denied. You do not have permission to perform this action.',
+        statusCode: 403,
+      );
+    }
+
+    if (statusCode == 409) {
+      throw ApiException(
+        responseData['message'] as String? ??
+            'Email or username already exists.',
+        statusCode: 409,
+      );
+    }
+
+    if (statusCode == 500) {
+      throw ApiException(
+        responseData['message'] as String? ??
+            'Internal server error. Please try again later.',
+        statusCode: 500,
+      );
+    }
+
+    if (statusCode == 503) {
+      throw ApiException(
+        responseData['message'] as String? ??
+            'Service temporarily unavailable. Please try again later.',
+        statusCode: 503,
+      );
     }
 
     final message = responseData['message'] as String? ??
@@ -132,44 +193,5 @@ class ApiService {
     final errors = responseData['errors'] as Map<String, dynamic>?;
 
     throw ApiException(message, statusCode: statusCode, errors: errors);
-  }
-
-  Future<bool> attemptTokenRefresh() async {
-    // Step 1: Fetch the stored Refresh Token from local storage
-    final refreshToken = storageService.getRefreshToken();
-    if (refreshToken == null || refreshToken.isEmpty) return false;
-
-    try {
-      // Step 2: Send the Refresh Token to the backend server
-      final response = await http
-          .post(
-        Uri.parse(ApiConfig.refreshUrl), // http://10.0.2.2:8080/api/v1/auth/refresh
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'refresh_token': refreshToken}),
-      )
-          .timeout(ApiConfig.timeout);
-
-      // Step 3: Check if the backend accepted the Refresh Token
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-
-        if (data['success'] == true && data['data'] != null) {
-          // Step 4: Parse the NEW tokens sent by the backend
-          final newTokens = AuthTokensModel.fromJson(
-            data['data'] as Map<String, dynamic>,
-          );
-
-          // Step 5: Save the NEW Access Token & NEW Refresh Token to phone storage
-          await storageService.saveTokens(newTokens);
-          return true; // Token refresh succeeded!
-        }
-      }
-    } catch (_) {
-      // Network or server error during refresh
-    }
-
-    // Step 6: If refresh failed (e.g., Refresh Token expired after 7 days)
-    await storageService.clearAuth(); // Wipe all local user data
-    return false; // Token refresh failed!
   }
 }

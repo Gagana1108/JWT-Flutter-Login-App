@@ -9,7 +9,7 @@ class UserRepository {
   Future<User?> findByEmail(String email) async {
     return _dbClient.withConnection((conn) async {
       final results = await conn.execute(
-        'SELECT id, name, email, password_hash, created_at, updated_at FROM users WHERE email = :email LIMIT 1',
+        'SELECT id, name, email, role, password_hash, created_at, updated_at FROM users WHERE email = :email LIMIT 1',
         {'email': email.trim().toLowerCase()},
       );
 
@@ -23,7 +23,7 @@ class UserRepository {
   Future<User?> findById(int id) async {
     return _dbClient.withConnection((conn) async {
       final results = await conn.execute(
-        'SELECT id, name, email, password_hash, created_at, updated_at FROM users WHERE id = :id LIMIT 1',
+        'SELECT id, name, email, role, password_hash, created_at, updated_at FROM users WHERE id = :id LIMIT 1',
         {'id': id},
       );
 
@@ -41,7 +41,7 @@ class UserRepository {
   }) async {
     return _dbClient.withConnection((conn) async {
       final result = await conn.execute(
-        'INSERT INTO users (name, email, password_hash) VALUES (:name, :email, :passwordHash)',
+        'INSERT INTO users (name, email, role, password_hash) VALUES (:name, :email, "user", :passwordHash)',
         {
           'name': name.trim(),
           'email': email.trim().toLowerCase(),
@@ -55,6 +55,48 @@ class UserRepository {
         throw Exception('User created but failed to retrieve user record.');
       }
       return user;
+    });
+  }
+
+  Future<User?> updateUserProfile({
+    required int id,
+    required String name,
+  }) async {
+    return _dbClient.withConnection((conn) async {
+      await conn.execute(
+        'UPDATE users SET name = :name WHERE id = :id',
+        {
+          'id': id,
+          'name': name.trim(),
+        },
+      );
+      return findById(id);
+    });
+  }
+
+  Future<List<User>> getAllUsers() async {
+    return _dbClient.withConnection((conn) async {
+      final results = await conn.execute(
+        'SELECT id, name, email, role, created_at, updated_at FROM users ORDER BY id ASC',
+      );
+
+      return results.rows.map((row) => User.fromRow(row.assoc())).toList();
+    });
+  }
+
+  Future<User?> updateUserRole({
+    required int id,
+    required String role,
+  }) async {
+    return _dbClient.withConnection((conn) async {
+      await conn.execute(
+        'UPDATE users SET role = :role WHERE id = :id',
+        {
+          'id': id,
+          'role': role,
+        },
+      );
+      return findById(id);
     });
   }
 }
